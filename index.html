@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>F1 Pro Circuit - Fixed Model</title>
+    <title>F1 Pro Circuit - Flat Track Fix</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif; user-select: none; }
         
@@ -74,18 +74,25 @@
     import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
     import { OBJLoader } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/loaders/OBJLoader.js';
 
-    // === DATEI NAME ===
+    // ==========================================
+    // === EINSTELLUNGEN (HIER ÄNDERN!) ===
+    // ==========================================
+    
     const CAR_FILE = 'porsche.obj'; 
     
-    // === ANPASSUNGEN ===
-    const CAR_SCALE = 7.0;  // Auto deutlich größer gemacht!
-    const CAR_LIFT = 2.0;   // Auto höher gesetzt, damit es nicht im Boden steckt
-    
-    const CAR_COLOR = 0x222222; // Dunkles Grau für das Auto
-    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
-    const MAX_LAPS = 3;
-    const TRACK_WIDTH = 40; // Straße breiter gemacht
+    // SPIELE MIT DIESEN WERTEN, WENN ES NICHT PASST:
+    const CAR_SCALE = 0.015;  // Kleiner gemacht (Versuch mal 0.01 oder 0.02)
+    const CAR_ROTATION = 0;   // Rotation auf 0 gesetzt (Versuch Math.PI wenn es falsch rum ist)
+    const CAR_LIFT = 0.0;     // Wie hoch schwebt das Auto über dem Boden?
 
+    const CAR_COLOR = 0x111111; // Porsche Schwarz
+    const MAX_LAPS = 3;
+    const TRACK_WIDTH = 35; 
+
+    // ==========================================
+
+    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
+    
     // Globale Variablen
     let scene, camera, renderer;
     let playerGroup, carModel; 
@@ -94,7 +101,7 @@
 
     // Physik
     let speed = 0;
-    let maxSpeed = 1.67; // ~200 km/h
+    let maxSpeed = 1.67; 
     let baseAcceleration = 0.012; 
     let reverseSpeed = 0.6;
     let turnSpeed = 0.04;
@@ -123,7 +130,7 @@
 
         new THREE.TextureLoader().load(SKY_URL, (tex) => scene.background = tex, undefined, () => scene.background = new THREE.Color(0x87CEEB));
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.6)); 
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7)); 
         const sun = new THREE.DirectionalLight(0xffffff, 1.2);
         sun.position.set(200, 400, 200);
         sun.castShadow = true;
@@ -149,7 +156,8 @@
         const geo = new THREE.PlaneGeometry(4000, 4000);
         const mat = new THREE.MeshStandardMaterial({ color: 0x225522, roughness: 1 });
         const mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = -Math.PI / 2; mesh.position.y = -0.5; mesh.receiveShadow = true;
+        mesh.rotation.x = -Math.PI / 2; mesh.position.y = -0.05; // Etwas tiefer als die Straße
+        mesh.receiveShadow = true;
         scene.add(mesh);
     }
 
@@ -166,23 +174,28 @@
         ctx.fillStyle = '#eee'; ctx.fillRect(5,0,3,128); ctx.fillRect(120,0,3,128);
         const tex = new THREE.CanvasTexture(canvas); tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 80);
 
-        // Straße dicker gemacht, damit es wie ein Objekt aussieht
+        // FLACHE STRASSE
         const geo = new THREE.TubeGeometry(trackCurve, 400, TRACK_WIDTH/2, 8, true);
         const mat = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness:0.7 });
         const track = new THREE.Mesh(geo, mat);
         
-        track.scale.y = 0.05; // Dicker als vorher (0.01 -> 0.05)
-        track.position.y = 0.1; // Leicht angehoben
+        // HIER MACHEN WIR SIE FLACH
+        track.scale.y = 0.001; // Extrem flach (fast wie ein Blatt Papier)
+        track.position.y = 0.05; // Ganz leicht über dem Gras
+        
         track.receiveShadow = true; 
-        track.castShadow = true; // Wirft Schatten auf den Boden -> Sieht aus wie ein Objekt
         scene.add(track);
 
         const checkCanvas = document.createElement('canvas'); checkCanvas.width = 64; checkCanvas.height = 64;
         const cCtx = checkCanvas.getContext('2d'); cCtx.fillStyle = '#fff'; cCtx.fillRect(0,0,64,64); cCtx.fillStyle = '#000';
         for(let y=0; y<4; y++) for(let x=0; x<4; x++) if((x+y)%2) cCtx.fillRect(x*16, y*16, 16, 16);
         const checkTex = new THREE.CanvasTexture(checkCanvas); checkTex.wrapS = THREE.RepeatWrapping; checkTex.wrapT = THREE.RepeatWrapping; checkTex.repeat.set(TRACK_WIDTH/16, 4);
+        
         const startLine = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH, 12), new THREE.MeshStandardMaterial({map: checkTex, roughness: 0.5}));
-        startLine.rotation.x = -Math.PI/2; startLine.position.y = 0.2; startLine.position.z = 0; scene.add(startLine);
+        startLine.rotation.x = -Math.PI/2; 
+        startLine.position.y = 0.06; // Hauchdünn über der Straße
+        startLine.position.z = 0; 
+        scene.add(startLine);
 
         for(let i=0; i<30; i++) checkpoints.push(trackCurve.getPoint(i/30));
         nextCP = 1; 
@@ -237,7 +250,8 @@
     function createCar() {
         playerGroup = new THREE.Group(); 
         carModel = new THREE.Group();
-        playerGroup.position.set(0, 0.5, 50); 
+        playerGroup.position.set(0, CAR_LIFT, 50); 
+        // Rotation reset, damit wir volle Kontrolle haben (wird über Variable oben gesteuert)
         playerGroup.rotation.y = Math.PI; 
         
         playerGroup.add(carModel);
@@ -252,8 +266,8 @@
                 
                 // SKALIERUNG UND POSITION
                 object.scale.set(CAR_SCALE, CAR_SCALE, CAR_SCALE); 
-                object.position.y = CAR_LIFT; // Hier heben wir das Auto an!
-                object.rotation.y = Math.PI; 
+                object.position.y = 0;
+                object.rotation.y = CAR_ROTATION; 
 
                 const paint = new THREE.MeshStandardMaterial({ 
                     color: CAR_COLOR, 
@@ -275,7 +289,7 @@
             },
             (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% loaded'); },
             (error) => {
-                console.log('Fehler beim Laden des OBJ. Nutze Block-Auto als Backup.');
+                console.log('Fehler beim Laden des OBJ.');
                 document.getElementById('loading').innerText = "Fehler: Starte VS Code Live Server!";
                 buildBlockyFallback();
             }
@@ -312,8 +326,6 @@
 
         let closestDist = 9999;
         for(let i=0; i<trackPoints.length; i+=5) { const d = playerGroup.position.distanceTo(trackPoints[i]); if(d < closestDist) closestDist = d; }
-        
-        // Straßenerkennung angepasst an breitere Straße
         if (closestDist > (TRACK_WIDTH / 2)) { speed *= 0.92; document.getElementById('warning-text').style.display = 'block'; } else { document.getElementById('warning-text').style.display = 'none'; }
 
         for(let tree of trees) {
