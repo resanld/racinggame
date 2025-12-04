@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>F1 Pro Circuit - Debug Mode</title>
+    <title>F1 Pro Circuit - Smooth Drift</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif; user-select: none; }
         
@@ -51,7 +51,7 @@
 </head>
 <body>
 
-<div id="loading">Lade Auto...<br><small>Benutze das Menü oben rechts, wenn du das Auto nicht siehst!</small></div>
+<div id="loading">Lade Auto Modell...<br><small>(VS Code Live Server erforderlich)</small></div>
 
 <div id="hud">
     <div class="stat" id="lap-text">RUNDE 1 / 3</div>
@@ -76,36 +76,52 @@
     import { OBJLoader } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/loaders/OBJLoader.js';
     import { GUI } from 'https://cdn.skypack.dev/dat.gui';
 
-    // === CONFIG ===
-    const CAR_FILE = 'porsche.obj'; // Dein Dateiname
-    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
+    // ==========================================
+    // === DEINE WERTE ===
+    // ==========================================
+    
+    const CAR_FILE = 'porsche.obj'; 
+    
+    const CAR_SCALE = 2.0;    // Größe: 2.0
+    const CAR_LIFT = 1.1;     // Höhe: 1.1
+    const CAR_ROTATION = 0;   // Drehung: 0 (Blickrichtung korrigieren)
+
+    const CAR_COLOR = 0x111111; 
     const MAX_LAPS = 3;
     const TRACK_WIDTH = 35; 
 
+    // ==========================================
+
+    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
+    
     // Globale Variablen
     let scene, camera, renderer;
     let playerGroup, carModel, loadedCarMesh; 
     let tires = [], particles = [], trees = [];
     let trackCurve, trackPoints = [];
 
-    // Physik
+    // Physik & Drift Variablen
     let speed = 0;
     let maxSpeed = 1.67; 
     let baseAcceleration = 0.012; 
     let reverseSpeed = 0.6;
     let turnSpeed = 0.04;
     
+    // Neue Variablen für smoothen Drift
+    let currentDriftAngle = 0;
+    let targetDriftAngle = 0;
+    let driftSmoothness = 0.08; // Niedriger = Weicher, Höher = Direkter
+    
     let keys = { w:false, a:false, s:false, d:false, space:false };
 
     // Debug Parameter (GUI)
     const params = {
-        scale: 1.0,
-        lift: 0.0,
-        rotationY: 180, // Grad
-        visible: true
+        scale: CAR_SCALE,
+        lift: CAR_LIFT,
+        rotationY: CAR_ROTATION * (180/Math.PI), // Für GUI in Grad
     };
 
-    // Rennen Logic
+    // Rennen
     let checkpoints = [];
     let nextCP = 0;
     let currentLap = 1;
@@ -119,7 +135,7 @@
         scene = new THREE.Scene();
         scene.fog = new THREE.Fog(0x87CEEB, 50, 1000);
         camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 2500);
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -151,9 +167,9 @@
 
     function initGUI() {
         const gui = new GUI();
-        const folder = gui.addFolder('Auto Einstellungen (Live)');
-        folder.add(params, 'scale', 0.001, 10.0).step(0.001).name('Größe').onChange(updateCarTransform);
-        folder.add(params, 'lift', -5, 5).step(0.1).name('Höhe (Y)').onChange(updateCarTransform);
+        const folder = gui.addFolder('Auto Anpassung');
+        folder.add(params, 'scale', 0.1, 5.0).step(0.1).name('Größe').onChange(updateCarTransform);
+        folder.add(params, 'lift', -2, 5).step(0.1).name('Höhe Y').onChange(updateCarTransform);
         folder.add(params, 'rotationY', 0, 360).name('Drehung').onChange(updateCarTransform);
         folder.open();
     }
@@ -187,13 +203,11 @@
         ctx.fillStyle = '#eee'; ctx.fillRect(5,0,3,128); ctx.fillRect(120,0,3,128);
         const tex = new THREE.CanvasTexture(canvas); tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 80);
 
-        // Flache Straße
         const geo = new THREE.TubeGeometry(trackCurve, 400, TRACK_WIDTH/2, 8, true);
         const mat = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness:0.7 });
         const track = new THREE.Mesh(geo, mat);
         track.scale.y = 0.001; track.position.y = 0.05; track.receiveShadow = true; scene.add(track);
 
-        // Ziellinie
         const checkCanvas = document.createElement('canvas'); checkCanvas.width = 64; checkCanvas.height = 64;
         const cCtx = checkCanvas.getContext('2d'); cCtx.fillStyle = '#fff'; cCtx.fillRect(0,0,64,64); cCtx.fillStyle = '#000';
         for(let y=0; y<4; y++) for(let x=0; x<4; x++) if((x+y)%2) cCtx.fillRect(x*16, y*16, 16, 16);
@@ -257,10 +271,6 @@
         playerGroup.position.set(0, 0.5, 50); 
         playerGroup.rotation.y = Math.PI; 
         
-        // DEBUG HELFER: ZEIGT AN WO DAS AUTO SEIN SOLLTE
-        const axesHelper = new THREE.AxesHelper(5); // Rot=X, Grün=Y, Blau=Z
-        playerGroup.add(axesHelper);
-
         playerGroup.add(carModel);
         scene.add(playerGroup);
 
@@ -271,19 +281,33 @@
                 document.getElementById('loading').style.display = 'none';
                 loadedCarMesh = object;
                 
-                // Initialwerte anwenden
-                updateCarTransform();
+                // DEINE WERTE ANGEWENDET
+                object.scale.set(CAR_SCALE, CAR_SCALE, CAR_SCALE); 
+                object.position.y = CAR_LIFT;
+                object.rotation.y = CAR_ROTATION; 
 
-                const paint = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.2 });
-                object.traverse(function (child) { if (child.isMesh) { child.material = paint; child.castShadow = true; }});
+                const paint = new THREE.MeshStandardMaterial({ 
+                    color: CAR_COLOR, 
+                    metalness: 0.6, 
+                    roughness: 0.2 
+                });
+
+                object.traverse(function (child) {
+                    if (child.isMesh) {
+                        child.material = paint;
+                        child.castShadow = true;
+                    }
+                });
+
                 carModel.add(object);
                 
+                // Reifen-Dummies für Rauch
                 let t1 = new THREE.Object3D(); t1.position.set(-1.5, 0, 1.5); carModel.add(t1); tires.push(t1);
                 let t2 = new THREE.Object3D(); t2.position.set(1.5, 0, 1.5); carModel.add(t2); tires.push(t2);
             },
             (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% loaded'); },
             (error) => {
-                document.getElementById('loading').innerText = "OBJ Fehler! Lade Backup...";
+                document.getElementById('loading').innerText = "Fehler: Starte VS Code Live Server!";
                 buildBlockyFallback();
             }
         );
@@ -297,7 +321,11 @@
     }
 
     function spawnSmoke(pos) {
-        if(Math.random()>0.4)return; const p=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.3),new THREE.MeshBasicMaterial({color:0xaaaaaa,transparent:true,opacity:0.5}));p.position.copy(pos);p.position.y=0.2;scene.add(p);particles.push({mesh:p,life:1.0});
+        if(Math.random()>0.4)return; const p=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.3),new THREE.MeshBasicMaterial({color:0xaaaaaa,transparent:true,opacity:0.4}));
+        p.position.copy(pos); p.position.y=0.2; 
+        p.rotation.set(Math.random(), Math.random(), Math.random());
+        scene.add(p);
+        particles.push({mesh:p, life:1.0});
     }
 
     function animate() {
@@ -310,8 +338,11 @@
         let displaySpeed = Math.min(Math.floor(speed * 120), 200);
         document.getElementById('speed-text').innerText = Math.abs(displaySpeed);
 
+        // --- STEUERUNG & PHYSIK ---
         if (keys.w) {
-            const speedFactor = 1 - (speed / maxSpeed); const currentAccel = baseAcceleration * (speedFactor > 0.1 ? speedFactor : 0.1); speed += currentAccel;
+            const speedFactor = 1 - (speed / maxSpeed); 
+            const currentAccel = baseAcceleration * (speedFactor > 0.1 ? speedFactor : 0.1);
+            speed += currentAccel;
         } else if (keys.s) { speed -= baseAcceleration * 1.5; } else { speed *= 0.99; }
         if (speed > maxSpeed) speed = maxSpeed; if (speed < -reverseSpeed) speed = -reverseSpeed;
 
@@ -320,7 +351,9 @@
         if (closestDist > (TRACK_WIDTH / 2)) { speed *= 0.92; document.getElementById('warning-text').style.display = 'block'; } else { document.getElementById('warning-text').style.display = 'none'; }
 
         for(let tree of trees) {
-            if(playerGroup.position.distanceTo(tree.pos) < tree.radius + 1.5) { speed = -speed * 0.5; playerGroup.position.add(playerGroup.position.clone().sub(tree.pos).normalize().multiplyScalar(1.5)); }
+            if(playerGroup.position.distanceTo(tree.pos) < tree.radius + 1.5) {
+                speed = -speed * 0.5; playerGroup.position.add(playerGroup.position.clone().sub(tree.pos).normalize().multiplyScalar(1.5));
+            }
         }
 
         if (Math.abs(speed) > 0.05) {
@@ -329,21 +362,42 @@
         }
         playerGroup.translateZ(-speed);
 
+        // --- VERBESSERTE DRIFT ANIMATION ---
+        targetDriftAngle = 0;
+
         if (keys.space && Math.abs(speed) > 0.5) {
-            carModel.rotation.y = THREE.MathUtils.lerp(carModel.rotation.y, (keys.a ? 0.5 : (keys.d ? -0.5 : 0)), 0.1);
+            // Wenn Drift gedrückt: Winkel basierend auf Lenkung
+            if (keys.a) targetDriftAngle = 0.5;
+            else if (keys.d) targetDriftAngle = -0.5;
+            else targetDriftAngle = 0; // Geradeaus rutschen
+
+            // Rauch
             tires.forEach(t => { const p=new THREE.Vector3(); t.getWorldPosition(p); spawnSmoke(p); });
-            speed *= 0.98;
-        } else { carModel.rotation.y = THREE.MathUtils.lerp(carModel.rotation.y, 0, 0.2); }
+            speed *= 0.99; // Leichtes Bremsen im Drift
+        } 
 
+        // Sanfte Interpolation zum Zielwinkel
+        currentDriftAngle = THREE.MathUtils.lerp(currentDriftAngle, targetDriftAngle, driftSmoothness);
+        carModel.rotation.y = currentDriftAngle;
+
+        // --- CHECKPOINTS & KAMERA ---
         const distToNext = playerGroup.position.distanceTo(checkpoints[nextCP]);
-        if(distToNext < 50) { nextCP++; if(nextCP >= checkpoints.length) { nextCP = 0; currentLap++; if(currentLap > MAX_LAPS) { raceFinished = true; document.getElementById('gameover').style.display = 'block'; document.getElementById('final-time').innerText = document.getElementById('time-text').innerText; } else { document.getElementById('lap-text').innerText = `RUNDE ${currentLap} / ${MAX_LAPS}`; } } }
+        if(distToNext < 50) {
+            nextCP++; if(nextCP >= checkpoints.length) { nextCP = 0; currentLap++; if(currentLap > MAX_LAPS) { raceFinished = true; document.getElementById('gameover').style.display = 'block'; document.getElementById('final-time').innerText = document.getElementById('time-text').innerText; } else { document.getElementById('lap-text').innerText = `RUNDE ${currentLap} / ${MAX_LAPS}`; } }
+        }
 
-        const relativeCamOffset = new THREE.Vector3(0, 6, 18); const cameraOffset = relativeCamOffset.applyMatrix4(playerGroup.matrixWorld);
-        camera.position.lerp(cameraOffset, 0.15);
-        const lookAtTarget = new THREE.Vector3(0, 2, -15); lookAtTarget.applyMatrix4(playerGroup.matrixWorld);
+        // Kamera Smooth Follow
+        const relativeCamOffset = new THREE.Vector3(0, 6, 18); 
+        const cameraOffset = relativeCamOffset.applyMatrix4(playerGroup.matrixWorld);
+        
+        // Etwas mehr Dämpfung (0.1 statt 0.15) für filmischeren Look
+        camera.position.lerp(cameraOffset, 0.1);
+        
+        const lookAtTarget = new THREE.Vector3(0, 2, -15); 
+        lookAtTarget.applyMatrix4(playerGroup.matrixWorld);
         camera.lookAt(lookAtTarget);
 
-        for(let i=particles.length-1; i>=0; i--) { let p = particles[i]; p.life-=0.03; p.mesh.position.y+=0.05; p.mesh.scale.multiplyScalar(1.05); p.mesh.material.opacity=p.life; if(p.life<=0){ scene.remove(p.mesh); particles.splice(i,1); }}
+        for(let i=particles.length-1; i>=0; i--) { let p = particles[i]; p.life-=0.02; p.mesh.position.y+=0.05; p.mesh.scale.multiplyScalar(1.05); p.mesh.material.opacity=p.life*0.5; if(p.life<=0){ scene.remove(p.mesh); particles.splice(i,1); }}
         renderer.render(scene, camera);
     }
 </script>
