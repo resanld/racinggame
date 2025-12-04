@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>F1 Pro Circuit - Flat Track Fix</title>
+    <title>F1 Pro Circuit - Debug Mode</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif; user-select: none; }
         
@@ -36,6 +36,7 @@
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: white; font-size: 24px; font-weight: bold; background: rgba(0,0,0,0.8); padding: 20px;
             pointer-events: none;
+            z-index: 200;
         }
 
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
@@ -50,7 +51,7 @@
 </head>
 <body>
 
-<div id="loading">Lade Auto Modell...<br><small>(Stelle sicher, dass Live Server läuft!)</small></div>
+<div id="loading">Lade Auto...<br><small>Benutze das Menü oben rechts, wenn du das Auto nicht siehst!</small></div>
 
 <div id="hud">
     <div class="stat" id="lap-text">RUNDE 1 / 3</div>
@@ -73,29 +74,17 @@
 <script type="module">
     import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
     import { OBJLoader } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/loaders/OBJLoader.js';
+    import { GUI } from 'https://cdn.skypack.dev/dat.gui';
 
-    // ==========================================
-    // === EINSTELLUNGEN (HIER ÄNDERN!) ===
-    // ==========================================
-    
-    const CAR_FILE = 'porsche.obj'; 
-    
-    // SPIELE MIT DIESEN WERTEN, WENN ES NICHT PASST:
-    const CAR_SCALE = 0.015;  // Kleiner gemacht (Versuch mal 0.01 oder 0.02)
-    const CAR_ROTATION = 0;   // Rotation auf 0 gesetzt (Versuch Math.PI wenn es falsch rum ist)
-    const CAR_LIFT = 0.0;     // Wie hoch schwebt das Auto über dem Boden?
-
-    const CAR_COLOR = 0x111111; // Porsche Schwarz
+    // === CONFIG ===
+    const CAR_FILE = 'porsche.obj'; // Dein Dateiname
+    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
     const MAX_LAPS = 3;
     const TRACK_WIDTH = 35; 
 
-    // ==========================================
-
-    const SKY_URL = 'https://images.unsplash.com/photo-1566228000-9c4523672336?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80';
-    
     // Globale Variablen
     let scene, camera, renderer;
-    let playerGroup, carModel; 
+    let playerGroup, carModel, loadedCarMesh; 
     let tires = [], particles = [], trees = [];
     let trackCurve, trackPoints = [];
 
@@ -108,7 +97,15 @@
     
     let keys = { w:false, a:false, s:false, d:false, space:false };
 
-    // Rennen
+    // Debug Parameter (GUI)
+    const params = {
+        scale: 1.0,
+        lift: 0.0,
+        rotationY: 180, // Grad
+        visible: true
+    };
+
+    // Rennen Logic
     let checkpoints = [];
     let nextCP = 0;
     let currentLap = 1;
@@ -143,8 +140,8 @@
         createTrack(); 
         createTrees();
         createGrandstands();
-        
         createCar();
+        initGUI();
 
         window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; if(e.code === 'Space') keys.space = true; if(e.key.toLowerCase() === 'r') location.reload(); });
         window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; if(e.code === 'Space') keys.space = false; });
@@ -152,12 +149,28 @@
         startTime = Date.now();
     }
 
+    function initGUI() {
+        const gui = new GUI();
+        const folder = gui.addFolder('Auto Einstellungen (Live)');
+        folder.add(params, 'scale', 0.001, 10.0).step(0.001).name('Größe').onChange(updateCarTransform);
+        folder.add(params, 'lift', -5, 5).step(0.1).name('Höhe (Y)').onChange(updateCarTransform);
+        folder.add(params, 'rotationY', 0, 360).name('Drehung').onChange(updateCarTransform);
+        folder.open();
+    }
+
+    function updateCarTransform() {
+        if(loadedCarMesh) {
+            loadedCarMesh.scale.set(params.scale, params.scale, params.scale);
+            loadedCarMesh.position.y = params.lift;
+            loadedCarMesh.rotation.y = params.rotationY * (Math.PI / 180);
+        }
+    }
+
     function createGround() {
         const geo = new THREE.PlaneGeometry(4000, 4000);
         const mat = new THREE.MeshStandardMaterial({ color: 0x225522, roughness: 1 });
         const mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = -Math.PI / 2; mesh.position.y = -0.05; // Etwas tiefer als die Straße
-        mesh.receiveShadow = true;
+        mesh.rotation.x = -Math.PI / 2; mesh.position.y = -0.05; mesh.receiveShadow = true;
         scene.add(mesh);
     }
 
@@ -174,28 +187,19 @@
         ctx.fillStyle = '#eee'; ctx.fillRect(5,0,3,128); ctx.fillRect(120,0,3,128);
         const tex = new THREE.CanvasTexture(canvas); tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 80);
 
-        // FLACHE STRASSE
+        // Flache Straße
         const geo = new THREE.TubeGeometry(trackCurve, 400, TRACK_WIDTH/2, 8, true);
         const mat = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness:0.7 });
         const track = new THREE.Mesh(geo, mat);
-        
-        // HIER MACHEN WIR SIE FLACH
-        track.scale.y = 0.001; // Extrem flach (fast wie ein Blatt Papier)
-        track.position.y = 0.05; // Ganz leicht über dem Gras
-        
-        track.receiveShadow = true; 
-        scene.add(track);
+        track.scale.y = 0.001; track.position.y = 0.05; track.receiveShadow = true; scene.add(track);
 
+        // Ziellinie
         const checkCanvas = document.createElement('canvas'); checkCanvas.width = 64; checkCanvas.height = 64;
         const cCtx = checkCanvas.getContext('2d'); cCtx.fillStyle = '#fff'; cCtx.fillRect(0,0,64,64); cCtx.fillStyle = '#000';
         for(let y=0; y<4; y++) for(let x=0; x<4; x++) if((x+y)%2) cCtx.fillRect(x*16, y*16, 16, 16);
         const checkTex = new THREE.CanvasTexture(checkCanvas); checkTex.wrapS = THREE.RepeatWrapping; checkTex.wrapT = THREE.RepeatWrapping; checkTex.repeat.set(TRACK_WIDTH/16, 4);
-        
         const startLine = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH, 12), new THREE.MeshStandardMaterial({map: checkTex, roughness: 0.5}));
-        startLine.rotation.x = -Math.PI/2; 
-        startLine.position.y = 0.06; // Hauchdünn über der Straße
-        startLine.position.z = 0; 
-        scene.add(startLine);
+        startLine.rotation.x = -Math.PI/2; startLine.position.y = 0.06; startLine.position.z = 0; scene.add(startLine);
 
         for(let i=0; i<30; i++) checkpoints.push(trackCurve.getPoint(i/30));
         nextCP = 1; 
@@ -250,10 +254,13 @@
     function createCar() {
         playerGroup = new THREE.Group(); 
         carModel = new THREE.Group();
-        playerGroup.position.set(0, CAR_LIFT, 50); 
-        // Rotation reset, damit wir volle Kontrolle haben (wird über Variable oben gesteuert)
+        playerGroup.position.set(0, 0.5, 50); 
         playerGroup.rotation.y = Math.PI; 
         
+        // DEBUG HELFER: ZEIGT AN WO DAS AUTO SEIN SOLLTE
+        const axesHelper = new THREE.AxesHelper(5); // Rot=X, Grün=Y, Blau=Z
+        playerGroup.add(axesHelper);
+
         playerGroup.add(carModel);
         scene.add(playerGroup);
 
@@ -262,26 +269,13 @@
             CAR_FILE,
             (object) => {
                 document.getElementById('loading').style.display = 'none';
-                console.log("Porsche geladen!");
+                loadedCarMesh = object;
                 
-                // SKALIERUNG UND POSITION
-                object.scale.set(CAR_SCALE, CAR_SCALE, CAR_SCALE); 
-                object.position.y = 0;
-                object.rotation.y = CAR_ROTATION; 
+                // Initialwerte anwenden
+                updateCarTransform();
 
-                const paint = new THREE.MeshStandardMaterial({ 
-                    color: CAR_COLOR, 
-                    metalness: 0.6, 
-                    roughness: 0.2 
-                });
-
-                object.traverse(function (child) {
-                    if (child.isMesh) {
-                        child.material = paint;
-                        child.castShadow = true;
-                    }
-                });
-
+                const paint = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.2 });
+                object.traverse(function (child) { if (child.isMesh) { child.material = paint; child.castShadow = true; }});
                 carModel.add(object);
                 
                 let t1 = new THREE.Object3D(); t1.position.set(-1.5, 0, 1.5); carModel.add(t1); tires.push(t1);
@@ -289,8 +283,7 @@
             },
             (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% loaded'); },
             (error) => {
-                console.log('Fehler beim Laden des OBJ.');
-                document.getElementById('loading').innerText = "Fehler: Starte VS Code Live Server!";
+                document.getElementById('loading').innerText = "OBJ Fehler! Lade Backup...";
                 buildBlockyFallback();
             }
         );
@@ -318,9 +311,7 @@
         document.getElementById('speed-text').innerText = Math.abs(displaySpeed);
 
         if (keys.w) {
-            const speedFactor = 1 - (speed / maxSpeed); 
-            const currentAccel = baseAcceleration * (speedFactor > 0.1 ? speedFactor : 0.1);
-            speed += currentAccel;
+            const speedFactor = 1 - (speed / maxSpeed); const currentAccel = baseAcceleration * (speedFactor > 0.1 ? speedFactor : 0.1); speed += currentAccel;
         } else if (keys.s) { speed -= baseAcceleration * 1.5; } else { speed *= 0.99; }
         if (speed > maxSpeed) speed = maxSpeed; if (speed < -reverseSpeed) speed = -reverseSpeed;
 
@@ -329,9 +320,7 @@
         if (closestDist > (TRACK_WIDTH / 2)) { speed *= 0.92; document.getElementById('warning-text').style.display = 'block'; } else { document.getElementById('warning-text').style.display = 'none'; }
 
         for(let tree of trees) {
-            if(playerGroup.position.distanceTo(tree.pos) < tree.radius + 1.5) {
-                speed = -speed * 0.5; playerGroup.position.add(playerGroup.position.clone().sub(tree.pos).normalize().multiplyScalar(1.5));
-            }
+            if(playerGroup.position.distanceTo(tree.pos) < tree.radius + 1.5) { speed = -speed * 0.5; playerGroup.position.add(playerGroup.position.clone().sub(tree.pos).normalize().multiplyScalar(1.5)); }
         }
 
         if (Math.abs(speed) > 0.05) {
@@ -347,9 +336,7 @@
         } else { carModel.rotation.y = THREE.MathUtils.lerp(carModel.rotation.y, 0, 0.2); }
 
         const distToNext = playerGroup.position.distanceTo(checkpoints[nextCP]);
-        if(distToNext < 50) {
-            nextCP++; if(nextCP >= checkpoints.length) { nextCP = 0; currentLap++; if(currentLap > MAX_LAPS) { raceFinished = true; document.getElementById('gameover').style.display = 'block'; document.getElementById('final-time').innerText = document.getElementById('time-text').innerText; } else { document.getElementById('lap-text').innerText = `RUNDE ${currentLap} / ${MAX_LAPS}`; } }
-        }
+        if(distToNext < 50) { nextCP++; if(nextCP >= checkpoints.length) { nextCP = 0; currentLap++; if(currentLap > MAX_LAPS) { raceFinished = true; document.getElementById('gameover').style.display = 'block'; document.getElementById('final-time').innerText = document.getElementById('time-text').innerText; } else { document.getElementById('lap-text').innerText = `RUNDE ${currentLap} / ${MAX_LAPS}`; } } }
 
         const relativeCamOffset = new THREE.Vector3(0, 6, 18); const cameraOffset = relativeCamOffset.applyMatrix4(playerGroup.matrixWorld);
         camera.position.lerp(cameraOffset, 0.15);
